@@ -1,0 +1,5 @@
+discord.py
+web3
+aiohttp
+python-dotenv
+flask
