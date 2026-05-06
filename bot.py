@@ -18,8 +18,6 @@ CRONOS_RPC = "https://evm.cronos.org"
 COLLECTION_NAME = "Monkey Muscle"
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
-last_block = None
-
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 
@@ -44,7 +42,9 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# ====================== YOUR BOT CODE ======================
+# Set to track already posted sales (prevents ghost buys)
+seen_logs = set()
+
 async def fetch_metadata(token_id):
     try:
         token_uri = await contract.functions.tokenURI(token_id).call()
@@ -85,47 +85,60 @@ async def get_sale_price(from_addr, to_addr, block_number):
 
 @client.event
 async def on_ready():
-    global last_block
     print(f"✅ Monkey Muscle Sales Bot is ONLINE as {client.user}")
    
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("🧪 **Monkey Muscle Sales Bot is now ONLINE and ready!**\nWaiting for sales on Ebisu's Bay...")
+        await channel.send("🧪 **Monkey Muscle Sales Bot is now ONLINE and ready!**\nWaiting for new sales on Ebisu's Bay...")
         print("✅ Test message sent to channel")
     else:
         print(f"❌ Could not find channel {CHANNEL_ID}")
-    last_block = await w3.eth.block_number - 30
+    
     client.loop.create_task(sales_listener())
 
 async def sales_listener():
-    global last_block
+    global seen_logs
     channel = client.get_channel(CHANNEL_ID)
     if not channel:
         print("❌ Channel not found!")
         return
-    print("✅ Now listening for Monkey Muscle sales...")
+
+    print("✅ Now listening for NEW Monkey Muscle sales...")
+    
     while True:
         try:
             current_block = await w3.eth.block_number
-            if current_block <= last_block:
-                await asyncio.sleep(10)
-                continue
+            from_block = max(current_block - 10, 0)  # Only check last 10 blocks
+
             logs = await w3.eth.get_logs({
-                'fromBlock': last_block + 1,
+                'fromBlock': from_block,
                 'toBlock': current_block,
                 'address': CONTRACT_ADDRESS,
                 'topics': [TRANSFER_TOPIC]
             })
+
             for log in logs:
+                log_id = f"{log['blockNumber']}-{log['logIndex']}"  # Unique identifier
+                
+                if log_id in seen_logs:
+                    continue  # Skip already posted sales
+                
                 if len(log["topics"]) != 4:
                     continue
+                    
                 from_addr = "0x" + log["topics"][1].hex()[-40:]
                 to_addr = "0x" + log["topics"][2].hex()[-40:]
                 token_id = int(log["topics"][3].hex(), 16)
+                
                 if from_addr == "0x0000000000000000000000000000000000000000":
                     continue
+
+                # Mark as seen immediately
+                seen_logs.add(log_id)
+                
                 name, image_url, rarity = await fetch_metadata(token_id)
                 price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
+
                 embed = discord.Embed(
                     title="🛒 Monkey Muscle SOLD!",
                     description=f"**{name}**",
@@ -141,12 +154,14 @@ async def sales_listener():
                 embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE")
                 if image_url:
                     embed.set_image(url=image_url)
+
                 await channel.send(embed=embed)
-                print(f"✅ Posted sale for token #{token_id} | Price: {price_info}")
-            last_block = current_block
-            await asyncio.sleep(10)
+                print(f"✅ Posted NEW sale for token #{token_id} | Price: {price_info}")
+
+            await asyncio.sleep(12)  # Check every 12 seconds
+
         except Exception as e:
-            print(f"Error: {e}")
+            print(f"Error in listener: {e}")
             await asyncio.sleep(15)
 
 # ====================== START BOT ======================
