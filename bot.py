@@ -1,6 +1,7 @@
 import discord
 import asyncio
 import os
+import json
 from datetime import datetime
 from web3 import AsyncWeb3
 from dotenv import load_dotenv
@@ -18,9 +19,10 @@ CRONOS_RPC = "https://evm.cronos.org"
 COLLECTION_NAME = "Monkey Muscle"
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 
+SEEN_LOGS_FILE = "seen_logs.json"
+
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
-
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(CRONOS_RPC))
 
 contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=[{
@@ -31,9 +33,24 @@ contract = w3.eth.contract(address=CONTRACT_ADDRESS, abi=[{
     "type": "function"
 }])
 
+# ====================== PERSISTENT SEEN LOGS ======================
+def load_seen_logs():
+    if os.path.exists(SEEN_LOGS_FILE):
+        try:
+            with open(SEEN_LOGS_FILE, "r") as f:
+                return set(json.load(f))
+        except:
+            return set()
+    return set()
+
+def save_seen_logs(seen):
+    with open(SEEN_LOGS_FILE, "w") as f:
+        json.dump(list(seen), f)
+
+seen_logs = load_seen_logs()
+
 # ====================== KEEP-ALIVE SERVER ======================
 app = Flask(__name__)
-
 @app.route('/')
 def home():
     return "✅ Monkey Muscle Sales Bot is running 24/7 on Render!"
@@ -42,9 +59,7 @@ def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# Set to track already posted sales (prevents ghost buys)
-seen_logs = set()
-
+# ====================== HELPER FUNCTIONS ======================
 async def fetch_metadata(token_id):
     try:
         token_uri = await contract.functions.tokenURI(token_id).call()
@@ -67,16 +82,20 @@ async def fetch_metadata(token_id):
 
 async def get_sale_price(from_addr, to_addr, block_number):
     try:
-        for i in range(0, 8):
+        # More accurate: check a few blocks around the transfer
+        for i in range(-2, 6):
             check_block = block_number + i
+            if check_block < 0:
+                continue
             block = await w3.eth.get_block(check_block, full_transactions=True)
             if not block or not block.get("transactions"):
                 continue
             for tx in block["transactions"]:
-                if tx["value"] > 0:
-                    tx_from = tx["from"].lower()
-                    tx_to = tx["to"].lower() if tx["to"] else ""
-                    if from_addr.lower() in [tx_from, tx_to] or to_addr.lower() in [tx_from, tx_to]:
+                if tx.get("value", 0) > 0:
+                    tx_from = (tx["from"] or "").lower()
+                    tx_to = (tx["to"] or "").lower()
+                    if (from_addr.lower() in (tx_from, tx_to) or 
+                        to_addr.lower() in (tx_from, tx_to)):
                         price_cro = tx["value"] / 10**18
                         return f"{price_cro:.2f} CRO"
         return "Sold on Ebisu's Bay"
@@ -86,14 +105,13 @@ async def get_sale_price(from_addr, to_addr, block_number):
 @client.event
 async def on_ready():
     print(f"✅ Monkey Muscle Sales Bot is ONLINE as {client.user}")
-   
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("🧪 **Monkey Muscle Sales Bot is now ONLINE and ready!**\nWaiting for new sales on Ebisu's Bay...")
-        print("✅ Test message sent to channel")
+        await channel.send("🧪 **Monkey Muscle Sales Bot restarted and ready!**\nFake/dupe sales fixed.")
+        print("✅ Startup message sent")
     else:
         print(f"❌ Could not find channel {CHANNEL_ID}")
-    
+   
     client.loop.create_task(sales_listener())
 
 async def sales_listener():
@@ -103,12 +121,12 @@ async def sales_listener():
         print("❌ Channel not found!")
         return
 
-    print("✅ Now listening for NEW Monkey Muscle sales...")
-    
+    print("✅ Listening for NEW Monkey Muscle sales (dupe protection active)...")
+
     while True:
         try:
             current_block = await w3.eth.block_number
-            from_block = max(current_block - 10, 0)  # Only check last 10 blocks
+            from_block = max(current_block - 12, 0)   # Slightly bigger window but still safe
 
             logs = await w3.eth.get_logs({
                 'fromBlock': from_block,
@@ -118,24 +136,27 @@ async def sales_listener():
             })
 
             for log in logs:
-                log_id = f"{log['blockNumber']}-{log['logIndex']}"  # Unique identifier
-                
+                log_id = f"{log['blockNumber']}-{log['logIndex']}"
+
                 if log_id in seen_logs:
-                    continue  # Skip already posted sales
-                
+                    continue
+
                 if len(log["topics"]) != 4:
                     continue
-                    
+
                 from_addr = "0x" + log["topics"][1].hex()[-40:]
                 to_addr = "0x" + log["topics"][2].hex()[-40:]
                 token_id = int(log["topics"][3].hex(), 16)
-                
+
+                # Skip mints
                 if from_addr == "0x0000000000000000000000000000000000000000":
+                    seen_logs.add(log_id)
                     continue
 
-                # Mark as seen immediately
+                # Mark as seen BEFORE processing (prevents duplicates even if crash)
                 seen_logs.add(log_id)
-                
+                save_seen_logs(seen_logs)   # ← Persistent save
+
                 name, image_url, rarity = await fetch_metadata(token_id)
                 price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
 
@@ -152,13 +173,14 @@ async def sales_listener():
                 embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
                 embed.add_field(name="Contract", value=f"`{CONTRACT_ADDRESS}`", inline=False)
                 embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE")
+
                 if image_url:
                     embed.set_image(url=image_url)
 
                 await channel.send(embed=embed)
-                print(f"✅ Posted NEW sale for token #{token_id} | Price: {price_info}")
+                print(f"✅ Posted sale → Token #{token_id} | {price_info}")
 
-            await asyncio.sleep(12)  # Check every 12 seconds
+            await asyncio.sleep(10)  # Check every 10 seconds
 
         except Exception as e:
             print(f"Error in listener: {e}")
