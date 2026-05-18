@@ -24,8 +24,8 @@ SEEN_LOGS_FILE = "seen_logs.json"
 # ====================== IGNORED ADDRESSES ======================
 IGNORED_ADDRESSES = {
     "0x26d4a407355ffe98dcbcec6f03cfb14918802703",   # Staking Wallet
-    # Add more addresses here if needed (one per line)
-}.copy()  # Will be lowercased automatically
+    # Add more addresses here if needed
+}
 
 # Lowercase all ignored addresses
 IGNORED_ADDRESSES = {addr.lower() for addr in IGNORED_ADDRESSES}
@@ -93,7 +93,8 @@ async def get_sale_price(from_addr, to_addr, block_number):
     try:
         for i in range(-2, 6):
             check_block = block_number + i
-            if check_block < 0: continue
+            if check_block < 0: 
+                continue
             block = await w3.eth.get_block(check_block, full_transactions=True)
             if not block or not block.get("transactions"):
                 continue
@@ -113,7 +114,7 @@ async def on_ready():
     print(f"✅ Monkey Muscle Sales Bot is ONLINE as {client.user}")
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("🧪 **Bot Restarted**\nStaking wallet transfers are now fully ignored.")
+        await channel.send("🧪 **Bot Restarted**\nStaking transfers ignored.")
     client.loop.create_task(sales_listener())
 
 async def sales_listener():
@@ -123,7 +124,7 @@ async def sales_listener():
         print("❌ Channel not found!")
         return
 
-    print("✅ Listening for REAL sales only (staking ignored)...")
+    print("✅ Listening for REAL sales only...")
 
     while True:
         try:
@@ -154,6 +155,46 @@ async def sales_listener():
                     seen_logs.add(log_id)
                     continue
 
-                # Skip staking / treasury transfers
+                # Skip staking transfers
                 if from_addr in IGNORED_ADDRESSES or to_addr in IGNORED_ADDRESSES:
-                    seen_logs.add(log_id
+                    seen_logs.add(log_id)
+                    save_seen_logs(seen_logs)
+                    continue
+
+                # Real sale
+                seen_logs.add(log_id)
+                save_seen_logs(seen_logs)
+
+                name, image_url, rarity = await fetch_metadata(token_id)
+                price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
+
+                embed = discord.Embed(
+                    title="🛒 Monkey Muscle SOLD!",
+                    description=f"**{name}**",
+                    color=0x00ff88,
+                    timestamp=datetime.utcnow()
+                )
+                embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
+                embed.add_field(name="Buyer", value=f"`{to_addr[:8]}...`", inline=True)
+                embed.add_field(name="Seller", value=f"`{from_addr[:8]}...`", inline=True)
+                embed.add_field(name="Price", value=price_info, inline=False)
+                embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
+                embed.add_field(name="Contract", value=f"`{CONTRACT_ADDRESS}`", inline=False)
+                embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE")
+
+                if image_url:
+                    embed.set_image(url=image_url)
+
+                await channel.send(embed=embed)
+                print(f"✅ Posted REAL sale → Token #{token_id} | {price_info}")
+
+            await asyncio.sleep(10)
+
+        except Exception as e:
+            print(f"Error: {e}")
+            await asyncio.sleep(15)
+
+# ====================== START ======================
+if __name__ == "__main__":
+    Thread(target=run_flask, daemon=True).start()
+    client.run(DISCORD_TOKEN)
