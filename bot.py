@@ -21,6 +21,15 @@ TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523
 
 SEEN_LOGS_FILE = "seen_logs.json"
 
+# ====================== IGNORED ADDRESSES ======================
+IGNORED_ADDRESSES = {
+    "0x26d4a407355ffe98dcbcec6f03cfb14918802703",   # Staking Wallet
+    # Add more addresses here if needed (one per line)
+}.copy()  # Will be lowercased automatically
+
+# Lowercase all ignored addresses
+IGNORED_ADDRESSES = {addr.lower() for addr in IGNORED_ADDRESSES}
+
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(CRONOS_RPC))
@@ -49,17 +58,17 @@ def save_seen_logs(seen):
 
 seen_logs = load_seen_logs()
 
-# ====================== KEEP-ALIVE SERVER ======================
+# ====================== KEEP-ALIVE ======================
 app = Flask(__name__)
 @app.route('/')
 def home():
-    return "✅ Monkey Muscle Sales Bot is running 24/7 on Render!"
+    return "✅ Monkey Muscle Sales Bot is running 24/7"
 
 def run_flask():
     port = int(os.environ.get("PORT", 8080))
     app.run(host='0.0.0.0', port=port)
 
-# ====================== HELPER FUNCTIONS ======================
+# ====================== HELPERS ======================
 async def fetch_metadata(token_id):
     try:
         token_uri = await contract.functions.tokenURI(token_id).call()
@@ -82,20 +91,17 @@ async def fetch_metadata(token_id):
 
 async def get_sale_price(from_addr, to_addr, block_number):
     try:
-        # More accurate: check a few blocks around the transfer
         for i in range(-2, 6):
             check_block = block_number + i
-            if check_block < 0:
-                continue
+            if check_block < 0: continue
             block = await w3.eth.get_block(check_block, full_transactions=True)
             if not block or not block.get("transactions"):
                 continue
             for tx in block["transactions"]:
                 if tx.get("value", 0) > 0:
-                    tx_from = (tx["from"] or "").lower()
-                    tx_to = (tx["to"] or "").lower()
-                    if (from_addr.lower() in (tx_from, tx_to) or 
-                        to_addr.lower() in (tx_from, tx_to)):
+                    tx_from = (tx.get("from") or "").lower()
+                    tx_to = (tx.get("to") or "").lower()
+                    if (from_addr.lower() in (tx_from, tx_to) or to_addr.lower() in (tx_from, tx_to)):
                         price_cro = tx["value"] / 10**18
                         return f"{price_cro:.2f} CRO"
         return "Sold on Ebisu's Bay"
@@ -107,11 +113,7 @@ async def on_ready():
     print(f"✅ Monkey Muscle Sales Bot is ONLINE as {client.user}")
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("🧪 **Monkey Muscle Sales Bot restarted and ready!**\nFake/dupe sales fixed.")
-        print("✅ Startup message sent")
-    else:
-        print(f"❌ Could not find channel {CHANNEL_ID}")
-   
+        await channel.send("🧪 **Bot Restarted**\nStaking wallet transfers are now fully ignored.")
     client.loop.create_task(sales_listener())
 
 async def sales_listener():
@@ -121,12 +123,12 @@ async def sales_listener():
         print("❌ Channel not found!")
         return
 
-    print("✅ Listening for NEW Monkey Muscle sales (dupe protection active)...")
+    print("✅ Listening for REAL sales only (staking ignored)...")
 
     while True:
         try:
             current_block = await w3.eth.block_number
-            from_block = max(current_block - 12, 0)   # Slightly bigger window but still safe
+            from_block = max(current_block - 15, 0)
 
             logs = await w3.eth.get_logs({
                 'fromBlock': from_block,
@@ -137,15 +139,14 @@ async def sales_listener():
 
             for log in logs:
                 log_id = f"{log['blockNumber']}-{log['logIndex']}"
-
                 if log_id in seen_logs:
                     continue
 
                 if len(log["topics"]) != 4:
                     continue
 
-                from_addr = "0x" + log["topics"][1].hex()[-40:]
-                to_addr = "0x" + log["topics"][2].hex()[-40:]
+                from_addr = "0x" + log["topics"][1].hex()[-40:].lower()
+                to_addr = "0x" + log["topics"][2].hex()[-40:].lower()
                 token_id = int(log["topics"][3].hex(), 16)
 
                 # Skip mints
@@ -153,40 +154,6 @@ async def sales_listener():
                     seen_logs.add(log_id)
                     continue
 
-                # Mark as seen BEFORE processing (prevents duplicates even if crash)
-                seen_logs.add(log_id)
-                save_seen_logs(seen_logs)   # ← Persistent save
-
-                name, image_url, rarity = await fetch_metadata(token_id)
-                price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
-
-                embed = discord.Embed(
-                    title="🛒 Monkey Muscle SOLD!",
-                    description=f"**{name}**",
-                    color=0x00ff88,
-                    timestamp=datetime.utcnow()
-                )
-                embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
-                embed.add_field(name="Buyer", value=f"`{to_addr[:8]}...`", inline=True)
-                embed.add_field(name="Seller", value=f"`{from_addr[:8]}...`", inline=True)
-                embed.add_field(name="Price", value=price_info, inline=False)
-                embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
-                embed.add_field(name="Contract", value=f"`{CONTRACT_ADDRESS}`", inline=False)
-                embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE")
-
-                if image_url:
-                    embed.set_image(url=image_url)
-
-                await channel.send(embed=embed)
-                print(f"✅ Posted sale → Token #{token_id} | {price_info}")
-
-            await asyncio.sleep(10)  # Check every 10 seconds
-
-        except Exception as e:
-            print(f"Error in listener: {e}")
-            await asyncio.sleep(15)
-
-# ====================== START BOT ======================
-if __name__ == "__main__":
-    Thread(target=run_flask, daemon=True).start()
-    client.run(DISCORD_TOKEN)
+                # Skip staking / treasury transfers
+                if from_addr in IGNORED_ADDRESSES or to_addr in IGNORED_ADDRESSES:
+                    seen_logs.add(log_id
