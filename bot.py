@@ -136,7 +136,7 @@ async def on_ready():
 async def send_sample_embeds(channel):
     samples = [
         {"col": COLLECTIONS[0], "token_id": 100, "price": "123.45 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
-        {"col": COLLECTIONS[1], "token_id": 1, "price": "99.99 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
+        {"col": COLLECTIONS[1], "token_id": 256, "price": "99.99 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
     ]
     for sample in samples:
         col = sample["col"]
@@ -146,7 +146,7 @@ async def send_sample_embeds(channel):
         except Exception as e:
             print(f"Sample metadata failed for {col['name']} #{token_id}: {e}")
             name, image_url, rarity = f"{col['name']} #{token_id}", None, "Sample traits"
-        
+
         embed = discord.Embed(
             title=f"🛒 {col['name']} SOLD! (SAMPLE)",
             description=f"**{name}**\n*This is a ghost sample for UI check only*",
@@ -160,10 +160,10 @@ async def send_sample_embeds(channel):
         embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
         embed.add_field(name="Contract", value=f"`{col['address']}`", inline=False)
         embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | SAMPLE")
-        
+
         if image_url:
             embed.set_image(url=image_url)
-        
+
         await channel.send(embed=embed)
         print(f"✅ Sent sample embed for {col['name']}")
         await asyncio.sleep(1)
