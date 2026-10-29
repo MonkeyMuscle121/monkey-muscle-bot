@@ -30,24 +30,23 @@ COLLECTIONS = [
         "address": "0xEe553dcB65502f69F33AD1Ece015740dA9Cf0f02",
         "name": "Monkey Muscle VIP",
         "color": 0xff0000,  # Red
-        "ignored": set()  # Add any staking/treasury for this one if needed
+        "ignored": set()
     }
 ]
 
-# Lowercase addresses
+# Prepare lowercase ignored sets for comparison only
 for col in COLLECTIONS:
-    col["address"] = col["address"].lower()
     col["ignored"] = {addr.lower() for addr in col["ignored"]}
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(CRONOS_RPC))
 
-# Create contract objects for metadata (tokenURI)
+# Create contract objects using original checksum addresses
 contracts = {}
 for col in COLLECTIONS:
-    contracts[col["address"]] = w3.eth.contract(
-        address=col["address"],
+    contracts[col["address"].lower()] = w3.eth.contract(
+        address=col["address"],  # original checksum address
         abi=[{
             "inputs": [{"name": "tokenId", "type": "uint256"}],
             "name": "tokenURI",
@@ -131,12 +130,10 @@ async def on_ready():
     channel = client.get_channel(CHANNEL_ID)
     if channel:
         await channel.send("🧪 **Bot Restarted**\nNow monitoring Monkey Muscle (green) and Monkey Muscle VIP (red).")
-        # Send ghost sample embeds for UI check
         await send_sample_embeds(channel)
     client.loop.create_task(sales_listener())
 
 async def send_sample_embeds(channel):
-    """Send one sample/ghost sale embed per collection for UI testing."""
     samples = [
         {"col": COLLECTIONS[0], "token_id": 1, "price": "123.45 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
         {"col": COLLECTIONS[1], "token_id": 1, "price": "99.99 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
@@ -168,7 +165,7 @@ async def send_sample_embeds(channel):
         
         await channel.send(embed=embed)
         print(f"✅ Sent sample embed for {col['name']}")
-        await asyncio.sleep(1)  # Small delay between samples
+        await asyncio.sleep(1)
 
 async def sales_listener():
     global seen_logs
@@ -188,12 +185,12 @@ async def sales_listener():
                 logs = await w3.eth.get_logs({
                     'fromBlock': from_block,
                     'toBlock': current_block,
-                    'address': col["address"],
+                    'address': col["address"],  # checksum address
                     'topics': [TRANSFER_TOPIC]
                 })
 
                 for log in logs:
-                    log_id = f"{col['address']}-{log['blockNumber']}-{log['logIndex']}"
+                    log_id = f"{col['address'].lower()}-{log['blockNumber']}-{log['logIndex']}"
                     if log_id in seen_logs:
                         continue
 
@@ -209,7 +206,7 @@ async def sales_listener():
                         seen_logs.add(log_id)
                         continue
 
-                    # Skip ignored addresses (staking etc.)
+                    # Skip ignored addresses
                     if from_addr in col["ignored"] or to_addr in col["ignored"]:
                         seen_logs.add(log_id)
                         save_seen_logs(seen_logs)
