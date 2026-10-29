@@ -46,7 +46,7 @@ w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(CRONOS_RPC))
 contracts = {}
 for col in COLLECTIONS:
     contracts[col["address"].lower()] = w3.eth.contract(
-        address=col["address"],  # original checksum address
+        address=col["address"],
         abi=[{
             "inputs": [{"name": "tokenId", "type": "uint256"}],
             "name": "tokenURI",
@@ -135,7 +135,7 @@ async def on_ready():
 
 async def send_sample_embeds(channel):
     samples = [
-        {"col": COLLECTIONS[0], "token_id": 1, "price": "123.45 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
+        {"col": COLLECTIONS[0], "token_id": 100, "price": "123.45 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
         {"col": COLLECTIONS[1], "token_id": 1, "price": "99.99 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
     ]
     for sample in samples:
@@ -143,7 +143,8 @@ async def send_sample_embeds(channel):
         token_id = sample["token_id"]
         try:
             name, image_url, rarity = await fetch_metadata(col["address"], token_id)
-        except:
+        except Exception as e:
+            print(f"Sample metadata failed for {col['name']} #{token_id}: {e}")
             name, image_url, rarity = f"{col['name']} #{token_id}", None, "Sample traits"
         
         embed = discord.Embed(
@@ -185,7 +186,7 @@ async def sales_listener():
                 logs = await w3.eth.get_logs({
                     'fromBlock': from_block,
                     'toBlock': current_block,
-                    'address': col["address"],  # checksum address
+                    'address': col["address"],
                     'topics': [TRANSFER_TOPIC]
                 })
 
