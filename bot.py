@@ -135,8 +135,21 @@ async def on_ready():
 
 async def send_sample_embeds(channel):
     samples = [
-        {"col": COLLECTIONS[0], "token_id": 100, "price": "123.45 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
-        {"col": COLLECTIONS[1], "token_id": 256, "price": "99.99 CRO", "buyer": "0xSampleB...", "seller": "0xSampleS..."},
+        {
+            "col": COLLECTIONS[0],
+            "token_id": 100,
+            "price": "123.45 CRO",
+            "buyer": "0xSampleB...",
+            "seller": "0xSampleS...",
+            "fallback_image": "https://via.placeholder.com/400x400/00ff88/000000?text=Monkey+Muscle+Sample"
+        },
+        {
+            "col": COLLECTIONS[1],
+            "token_id": 256,
+            "price": "99.99 CRO",
+            "buyer": "0xSampleB...",
+            "seller": "0xSampleS...",
+        },
     ]
     for sample in samples:
         col = sample["col"]
@@ -146,6 +159,10 @@ async def send_sample_embeds(channel):
         except Exception as e:
             print(f"Sample metadata failed for {col['name']} #{token_id}: {e}")
             name, image_url, rarity = f"{col['name']} #{token_id}", None, "Sample traits"
+
+        # Use fallback image if metadata didn't return one
+        if not image_url and sample.get("fallback_image"):
+            image_url = sample["fallback_image"]
 
         embed = discord.Embed(
             title=f"🛒 {col['name']} SOLD! (SAMPLE)",
