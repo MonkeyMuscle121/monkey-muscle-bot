@@ -87,19 +87,57 @@ async def fetch_metadata(contract_address, token_id):
     try:
         contract = contracts[contract_address.lower()]
         token_uri = await contract.functions.tokenURI(token_id).call()
+        print(f"Token URI for {contract_address} #{token_id}: {token_uri}")
+
+        # Handle IPFS and common gateways
         if token_uri.startswith("ipfs://"):
             token_uri = token_uri.replace("ipfs://", "https://ipfs.io/ipfs/")
+        elif token_uri.startswith("https://ipfs.io/ipfs/"):
+            pass
+        elif "ipfs" in token_uri.lower():
+            if "/ipfs/" in token_uri:
+                cid = token_uri.split("/ipfs/")[-1].split("?")[0]
+                token_uri = f"https://ipfs.io/ipfs/{cid}"
+
         async with aiohttp.ClientSession() as session:
-            async with session.get(token_uri, timeout=10) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    name = data.get("name", f"NFT #{token_id}")
-                    image = data.get("image") or data.get("image_url")
-                    if image and image.startswith("ipfs://"):
+            async with session.get(token_uri, timeout=15) as resp:
+                if resp.status != 200:
+                    print(f"Metadata HTTP error {resp.status} for #{token_id}")
+                    return f"NFT #{token_id}", None, "Rarity unavailable"
+
+                data = await resp.json()
+                name = data.get("name") or data.get("title") or f"NFT #{token_id}"
+
+                # Try multiple possible image fields
+                image = (
+                    data.get("image")
+                    or data.get("image_url")
+                    or data.get("imageUrl")
+                    or data.get("image_uri")
+                    or (data.get("properties", {}) or {}).get("image")
+                    or (data.get("animation_url") if isinstance(data.get("animation_url"), str) else None)
+                )
+
+                # If image is a dict (some collections do this)
+                if isinstance(image, dict):
+                    image = image.get("url") or image.get("ipfs") or image.get("gateway")
+
+                if image and isinstance(image, str):
+                    if image.startswith("ipfs://"):
                         image = image.replace("ipfs://", "https://ipfs.io/ipfs/")
-                    attributes = data.get("attributes", [])
-                    rarity_text = "\n".join([f"{a.get('trait_type', 'Trait')}: {a.get('value')}" for a in attributes]) if attributes else "No traits available"
-                    return name, image, rarity_text
+                    elif "/ipfs/" in image and not image.startswith("http"):
+                        cid = image.split("/ipfs/")[-1].split("?")[0]
+                        image = f"https://ipfs.io/ipfs/{cid}"
+
+                attributes = data.get("attributes") or data.get("traits") or []
+                rarity_text = "\n".join([
+                    f"{a.get('trait_type', a.get('traitType', 'Trait'))}: {a.get('value')}"
+                    for a in attributes
+                    if isinstance(a, dict)
+                ]) if attributes else "No traits available"
+
+                return name, image, rarity_text
+
     except Exception as e:
         print(f"Metadata error #{token_id} on {contract_address}: {e}")
     return f"NFT #{token_id}", None, "Rarity unavailable"
@@ -160,7 +198,6 @@ async def send_sample_embeds(channel):
             print(f"Sample metadata failed for {col['name']} #{token_id}: {e}")
             name, image_url, rarity = f"{col['name']} #{token_id}", None, "Sample traits"
 
-        # Use fallback image if metadata didn't return one
         if not image_url and sample.get("fallback_image"):
             image_url = sample["fallback_image"]
 
