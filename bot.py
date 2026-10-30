@@ -18,23 +18,21 @@ CRONOS_RPC = "https://evm.cronos.org"
 TRANSFER_TOPIC = "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
 SEEN_LOGS_FILE = "seen_logs.json"
 
-# Collections: address, name, color, ignored addresses
 COLLECTIONS = [
     {
         "address": "0x9afF30868d56256bAD67a31d4e58f992d90f4E44",
         "name": "Monkey Muscle",
-        "color": 0x00ff88,  # Green
+        "color": 0x00ff88,
         "ignored": {"0x26d4a407355ffe98dcbcec6f03cfb14918802703"}
     },
     {
         "address": "0xEe553dcB65502f69F33AD1Ece015740dA9Cf0f02",
         "name": "Monkey Muscle VIP",
-        "color": 0xff0000,  # Red
+        "color": 0xff0000,
         "ignored": set()
     }
 ]
 
-# Prepare lowercase ignored sets for comparison only
 for col in COLLECTIONS:
     col["ignored"] = {addr.lower() for addr in col["ignored"]}
 
@@ -42,7 +40,6 @@ intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(CRONOS_RPC))
 
-# Create contract objects using original checksum addresses
 contracts = {}
 for col in COLLECTIONS:
     contracts[col["address"].lower()] = w3.eth.contract(
@@ -56,7 +53,6 @@ for col in COLLECTIONS:
         }]
     )
 
-# ====================== PERSISTENT SEEN LOGS ======================
 def load_seen_logs():
     if os.path.exists(SEEN_LOGS_FILE):
         try:
@@ -72,7 +68,6 @@ def save_seen_logs(seen):
 
 seen_logs = load_seen_logs()
 
-# ====================== KEEP-ALIVE ======================
 app = Flask(__name__)
 @app.route('/')
 def home():
@@ -89,54 +84,65 @@ async def fetch_metadata(contract_address, token_id):
         token_uri = await contract.functions.tokenURI(token_id).call()
         print(f"Token URI for {contract_address} #{token_id}: {token_uri}")
 
-        # Handle IPFS and common gateways
+        # Build list of URLs to try
+        urls_to_try = []
         if token_uri.startswith("ipfs://"):
-            token_uri = token_uri.replace("ipfs://", "https://ipfs.io/ipfs/")
-        elif token_uri.startswith("https://ipfs.io/ipfs/"):
-            pass
-        elif "ipfs" in token_uri.lower():
-            if "/ipfs/" in token_uri:
-                cid = token_uri.split("/ipfs/")[-1].split("?")[0]
-                token_uri = f"https://ipfs.io/ipfs/{cid}"
+            cid = token_uri.replace("ipfs://", "")
+            urls_to_try = [
+                f"https://ipfs.io/ipfs/{cid}",
+                f"https://gateway.pinata.cloud/ipfs/{cid}",
+                f"https://cloudflare-ipfs.com/ipfs/{cid}",
+                f"https://dweb.link/ipfs/{cid}",
+            ]
+        elif token_uri.startswith("http"):
+            urls_to_try = [token_uri]
+        else:
+            urls_to_try = [token_uri]
 
-        async with aiohttp.ClientSession() as session:
-            async with session.get(token_uri, timeout=15) as resp:
-                if resp.status != 200:
-                    print(f"Metadata HTTP error {resp.status} for #{token_id}")
-                    return f"NFT #{token_id}", None, "Rarity unavailable"
+        data = None
+        for url in urls_to_try:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=12) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            print(f"✅ Metadata loaded from {url}")
+                            break
+            except Exception as e:
+                print(f"Failed {url}: {e}")
+                continue
 
-                data = await resp.json()
-                name = data.get("name") or data.get("title") or f"NFT #{token_id}"
+        if not data:
+            print(f"❌ All gateways failed for #{token_id}")
+            return f"NFT #{token_id}", None, "Rarity unavailable"
 
-                # Try multiple possible image fields
-                image = (
-                    data.get("image")
-                    or data.get("image_url")
-                    or data.get("imageUrl")
-                    or data.get("image_uri")
-                    or (data.get("properties", {}) or {}).get("image")
-                    or (data.get("animation_url") if isinstance(data.get("animation_url"), str) else None)
-                )
+        name = data.get("name") or data.get("title") or f"NFT #{token_id}"
 
-                # If image is a dict (some collections do this)
-                if isinstance(image, dict):
-                    image = image.get("url") or image.get("ipfs") or image.get("gateway")
+        # Broader image search
+        image = (
+            data.get("image")
+            or data.get("image_url")
+            or data.get("imageUrl")
+            or data.get("image_uri")
+            or (data.get("properties") or {}).get("image")
+            or (data.get("properties") or {}).get("image_url")
+        )
 
-                if image and isinstance(image, str):
-                    if image.startswith("ipfs://"):
-                        image = image.replace("ipfs://", "https://ipfs.io/ipfs/")
-                    elif "/ipfs/" in image and not image.startswith("http"):
-                        cid = image.split("/ipfs/")[-1].split("?")[0]
-                        image = f"https://ipfs.io/ipfs/{cid}"
+        if isinstance(image, dict):
+            image = image.get("url") or image.get("ipfs") or image.get("gateway")
 
-                attributes = data.get("attributes") or data.get("traits") or []
-                rarity_text = "\n".join([
-                    f"{a.get('trait_type', a.get('traitType', 'Trait'))}: {a.get('value')}"
-                    for a in attributes
-                    if isinstance(a, dict)
-                ]) if attributes else "No traits available"
+        if image and isinstance(image, str):
+            if image.startswith("ipfs://"):
+                cid = image.replace("ipfs://", "")
+                image = f"https://ipfs.io/ipfs/{cid}"
 
-                return name, image, rarity_text
+        attributes = data.get("attributes") or data.get("traits") or []
+        rarity_text = "\n".join([
+            f"{a.get('trait_type', a.get('traitType', 'Trait'))}: {a.get('value')}"
+            for a in attributes if isinstance(a, dict)
+        ]) if attributes else "No traits available"
+
+        return name, image, rarity_text
 
     except Exception as e:
         print(f"Metadata error #{token_id} on {contract_address}: {e}")
@@ -256,18 +262,15 @@ async def sales_listener():
                     to_addr = "0x" + log["topics"][2].hex()[-40:].lower()
                     token_id = int(log["topics"][3].hex(), 16)
 
-                    # Skip mints
                     if from_addr == "0x0000000000000000000000000000000000000000":
                         seen_logs.add(log_id)
                         continue
 
-                    # Skip ignored addresses
                     if from_addr in col["ignored"] or to_addr in col["ignored"]:
                         seen_logs.add(log_id)
                         save_seen_logs(seen_logs)
                         continue
 
-                    # Real sale
                     seen_logs.add(log_id)
                     save_seen_logs(seen_logs)
 
@@ -300,7 +303,6 @@ async def sales_listener():
             print(f"Error: {e}")
             await asyncio.sleep(15)
 
-# ====================== START ======================
 if __name__ == "__main__":
     Thread(target=run_flask, daemon=True).start()
     client.run(DISCORD_TOKEN)
