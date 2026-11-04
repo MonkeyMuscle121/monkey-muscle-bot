@@ -23,13 +23,15 @@ COLLECTIONS = [
         "address": "0x9afF30868d56256bAD67a31d4e58f992d90f4E44",
         "name": "Monkey Muscle",
         "color": 0x00ff88,
-        "ignored": {"0x26d4a407355ffe98dcbcec6f03cfb14918802703"}
+        "ignored": {"0x26d4a407355ffe98dcbcec6f03cfb14918802703"},
+        "post_mints": False
     },
     {
         "address": "0xEe553dcB65502f69F33AD1Ece015740dA9Cf0f02",
         "name": "Monkey Muscle VIP",
         "color": 0xff0000,
-        "ignored": set()
+        "ignored": set(),
+        "post_mints": True   # ← posts newly minted tokens
     }
 ]
 
@@ -84,7 +86,6 @@ async def fetch_metadata(contract_address, token_id):
         token_uri = await contract.functions.tokenURI(token_id).call()
         print(f"Token URI for {contract_address} #{token_id}: {token_uri}")
 
-        # Build list of URLs to try
         urls_to_try = []
         if token_uri.startswith("ipfs://"):
             cid = token_uri.replace("ipfs://", "")
@@ -118,7 +119,6 @@ async def fetch_metadata(contract_address, token_id):
 
         name = data.get("name") or data.get("title") or f"NFT #{token_id}"
 
-        # Broader image search
         image = (
             data.get("image")
             or data.get("image_url")
@@ -173,7 +173,7 @@ async def on_ready():
     print(f"✅ Multi-Collection Sales Bot is ONLINE as {client.user}")
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("🧪 **Bot Restarted**\nNow monitoring Monkey Muscle (green) and Monkey Muscle VIP (red).")
+        await channel.send("🧪 **Bot Restarted**\nNow monitoring Monkey Muscle (green) and Monkey Muscle VIP (red) + VIP mints.")
         await send_sample_embeds(channel)
     client.loop.create_task(sales_listener())
 
@@ -235,7 +235,7 @@ async def sales_listener():
         print("❌ Channel not found!")
         return
 
-    print("✅ Listening for REAL sales on both collections...")
+    print("✅ Listening for sales + VIP mints...")
 
     while True:
         try:
@@ -262,31 +262,50 @@ async def sales_listener():
                     to_addr = "0x" + log["topics"][2].hex()[-40:].lower()
                     token_id = int(log["topics"][3].hex(), 16)
 
-                    if from_addr == "0x0000000000000000000000000000000000000000":
+                    is_mint = from_addr == "0x0000000000000000000000000000000000000000"
+
+                    # Skip mints unless this collection is set to post them
+                    if is_mint and not col.get("post_mints", False):
                         seen_logs.add(log_id)
                         continue
 
+                    # Skip ignored addresses (staking etc.)
                     if from_addr in col["ignored"] or to_addr in col["ignored"]:
                         seen_logs.add(log_id)
                         save_seen_logs(seen_logs)
                         continue
 
+                    # Real sale or mint
                     seen_logs.add(log_id)
                     save_seen_logs(seen_logs)
 
                     name, image_url, rarity = await fetch_metadata(col["address"], token_id)
-                    price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
 
-                    embed = discord.Embed(
-                        title=f"🛒 {col['name']} SOLD!",
-                        description=f"**{name}**",
-                        color=col["color"],
-                        timestamp=datetime.utcnow()
-                    )
-                    embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
-                    embed.add_field(name="Buyer", value=f"`{to_addr[:8]}...`", inline=True)
-                    embed.add_field(name="Seller", value=f"`{from_addr[:8]}...`", inline=True)
-                    embed.add_field(name="Price", value=price_info, inline=False)
+                    if is_mint:
+                        # Mint embed
+                        embed = discord.Embed(
+                            title=f"🆕 {col['name']} MINTED!",
+                            description=f"**{name}**",
+                            color=col["color"],
+                            timestamp=datetime.utcnow()
+                        )
+                        embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
+                        embed.add_field(name="Minter", value=f"`{to_addr[:8]}...`", inline=True)
+                        embed.add_field(name="Price", value="Mint", inline=False)
+                    else:
+                        # Sale embed
+                        price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
+                        embed = discord.Embed(
+                            title=f"🛒 {col['name']} SOLD!",
+                            description=f"**{name}**",
+                            color=col["color"],
+                            timestamp=datetime.utcnow()
+                        )
+                        embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
+                        embed.add_field(name="Buyer", value=f"`{to_addr[:8]}...`", inline=True)
+                        embed.add_field(name="Seller", value=f"`{from_addr[:8]}...`", inline=True)
+                        embed.add_field(name="Price", value=price_info, inline=False)
+
                     embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
                     embed.add_field(name="Contract", value=f"`{col['address']}`", inline=False)
                     embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE")
@@ -295,7 +314,8 @@ async def sales_listener():
                         embed.set_image(url=image_url)
 
                     await channel.send(embed=embed)
-                    print(f"✅ Posted {col['name']} sale → Token #{token_id} | {price_info}")
+                    action = "MINT" if is_mint else "SALE"
+                    print(f"✅ Posted {col['name']} {action} → Token #{token_id}")
 
             await asyncio.sleep(10)
 
