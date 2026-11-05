@@ -190,8 +190,8 @@ async def get_sale_price(from_addr, to_addr, block_number):
         return "Sold on Ebisu's Bay"
 
 def make_share_view(collection_name, token_id, price_text, contract_address):
-    """Share button that uses the correct Ebisu's Bay token page (image shows via card)."""
-    marketplace_url = f"https://app.ebisusbay.com/collection/{contract_address}/{token_id}"
+    """Share button using the correct Ebisu's Bay URL (chain ID 25)."""
+    marketplace_url = f"https://app.ebisusbay.com/collection/25/{contract_address}/{token_id}"
     text = f"Just got {collection_name} #{token_id}! {price_text} 🦍\n{marketplace_url}"
     share_url = f"https://twitter.com/intent/tweet?text={quote(text)}"
     view = discord.ui.View()
