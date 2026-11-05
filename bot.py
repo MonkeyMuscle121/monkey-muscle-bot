@@ -31,7 +31,7 @@ COLLECTIONS = [
         "name": "Monkey Muscle VIP",
         "color": 0xff0000,
         "ignored": set(),
-        "post_mints": True   # ← posts newly minted tokens
+        "post_mints": True
     }
 ]
 
@@ -178,7 +178,8 @@ async def on_ready():
     client.loop.create_task(sales_listener())
 
 async def send_sample_embeds(channel):
-    samples = [
+    # Sale samples
+    sale_samples = [
         {
             "col": COLLECTIONS[0],
             "token_id": 100,
@@ -195,7 +196,8 @@ async def send_sample_embeds(channel):
             "seller": "0xSampleS...",
         },
     ]
-    for sample in samples:
+
+    for sample in sale_samples:
         col = sample["col"]
         token_id = sample["token_id"]
         try:
@@ -225,8 +227,35 @@ async def send_sample_embeds(channel):
             embed.set_image(url=image_url)
 
         await channel.send(embed=embed)
-        print(f"✅ Sent sample embed for {col['name']}")
+        print(f"✅ Sent SALE sample for {col['name']}")
         await asyncio.sleep(1)
+
+    # Mint sample for VIP
+    vip_col = COLLECTIONS[1]
+    mint_token_id = 300  # change if you have a known minted token
+    try:
+        name, image_url, rarity = await fetch_metadata(vip_col["address"], mint_token_id)
+    except:
+        name, image_url, rarity = f"{vip_col['name']} #{mint_token_id}", None, "Sample traits"
+
+    embed = discord.Embed(
+        title=f"🆕 {vip_col['name']} MINTED! (SAMPLE)",
+        description=f"**{name}**\n*This is a ghost mint sample for UI check only*",
+        color=vip_col["color"],
+        timestamp=datetime.utcnow()
+    )
+    embed.add_field(name="Token ID", value=f"#{mint_token_id}", inline=True)
+    embed.add_field(name="Minter", value="`0xSampleM...`", inline=True)
+    embed.add_field(name="Price", value="Mint", inline=False)
+    embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
+    embed.add_field(name="Contract", value=f"`{vip_col['address']}`", inline=False)
+    embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | SAMPLE")
+
+    if image_url:
+        embed.set_image(url=image_url)
+
+    await channel.send(embed=embed)
+    print("✅ Sent MINT sample for VIP")
 
 async def sales_listener():
     global seen_logs
@@ -264,25 +293,21 @@ async def sales_listener():
 
                     is_mint = from_addr == "0x0000000000000000000000000000000000000000"
 
-                    # Skip mints unless this collection is set to post them
                     if is_mint and not col.get("post_mints", False):
                         seen_logs.add(log_id)
                         continue
 
-                    # Skip ignored addresses (staking etc.)
                     if from_addr in col["ignored"] or to_addr in col["ignored"]:
                         seen_logs.add(log_id)
                         save_seen_logs(seen_logs)
                         continue
 
-                    # Real sale or mint
                     seen_logs.add(log_id)
                     save_seen_logs(seen_logs)
 
                     name, image_url, rarity = await fetch_metadata(col["address"], token_id)
 
                     if is_mint:
-                        # Mint embed
                         embed = discord.Embed(
                             title=f"🆕 {col['name']} MINTED!",
                             description=f"**{name}**",
@@ -293,7 +318,6 @@ async def sales_listener():
                         embed.add_field(name="Minter", value=f"`{to_addr[:8]}...`", inline=True)
                         embed.add_field(name="Price", value="Mint", inline=False)
                     else:
-                        # Sale embed
                         price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
                         embed = discord.Embed(
                             title=f"🛒 {col['name']} SOLD!",
