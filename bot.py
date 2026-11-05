@@ -123,22 +123,39 @@ async def fetch_metadata(contract_address, token_id):
 
         name = data.get("name") or data.get("title") or f"NFT #{token_id}"
 
+        # Stronger image detection
         image = (
             data.get("image")
             or data.get("image_url")
             or data.get("imageUrl")
             or data.get("image_uri")
+            or data.get("imageURI")
+            or data.get("animation_url")
             or (data.get("properties") or {}).get("image")
             or (data.get("properties") or {}).get("image_url")
+            or (data.get("properties") or {}).get("imageUrl")
+            or (data.get("media") or {}).get("image")
+            or (data.get("media") or {}).get("url")
         )
 
+        if not image and isinstance(data.get("properties"), dict):
+            props = data["properties"]
+            image = props.get("image") or props.get("image_url") or props.get("url")
+
         if isinstance(image, dict):
-            image = image.get("url") or image.get("ipfs") or image.get("gateway")
+            image = image.get("url") or image.get("ipfs") or image.get("gateway") or image.get("uri")
+
+        if not image:
+            print(f"⚠️ No image found for #{token_id}. Top-level keys: {list(data.keys())}")
+            if "properties" in data and isinstance(data["properties"], dict):
+                print(f"   properties keys: {list(data['properties'].keys())}")
 
         if image and isinstance(image, str):
             if image.startswith("ipfs://"):
                 cid = image.replace("ipfs://", "")
                 image = f"https://ipfs.io/ipfs/{cid}"
+            elif image.startswith("ar://"):
+                image = f"https://arweave.net/{image.replace('ar://', '')}"
 
         attributes = data.get("attributes") or data.get("traits") or []
         rarity_text = "\n".join([
@@ -172,9 +189,9 @@ async def get_sale_price(from_addr, to_addr, block_number):
     except:
         return "Sold on Ebisu's Bay"
 
-def make_share_view(collection_name, token_id, price_text, contract_address, image_url=None):
-    """Creates a link button that opens a pre-filled X post with the marketplace page (image shows via card)."""
-    marketplace_url = f"https://app.ebisusbay.com/collections/{contract_address}/{token_id}"
+def make_share_view(collection_name, token_id, price_text, contract_address):
+    """Share button that uses the correct Ebisu's Bay token page (image shows via card)."""
+    marketplace_url = f"https://app.ebisusbay.com/collection/{contract_address}/{token_id}"
     text = f"Just got {collection_name} #{token_id}! {price_text} 🦍\n{marketplace_url}"
     share_url = f"https://twitter.com/intent/tweet?text={quote(text)}"
     view = discord.ui.View()
@@ -238,7 +255,7 @@ async def send_sample_embeds(channel):
         if image_url:
             embed.set_image(url=image_url)
 
-        view = make_share_view(col["name"], token_id, sample["price"], col["address"], image_url)
+        view = make_share_view(col["name"], token_id, sample["price"], col["address"])
         await channel.send(embed=embed, view=view)
         print(f"✅ Sent SALE sample for {col['name']}")
         await asyncio.sleep(1)
@@ -267,7 +284,7 @@ async def send_sample_embeds(channel):
     if image_url:
         embed.set_image(url=image_url)
 
-    view = make_share_view(vip_col["name"], mint_token_id, "Mint", vip_col["address"], image_url)
+    view = make_share_view(vip_col["name"], mint_token_id, "Mint", vip_col["address"])
     await channel.send(embed=embed, view=view)
     print("✅ Sent MINT sample for VIP")
 
@@ -354,7 +371,7 @@ async def sales_listener():
                     if image_url:
                         embed.set_image(url=image_url)
 
-                    view = make_share_view(col["name"], token_id, price_text, col["address"], image_url)
+                    view = make_share_view(col["name"], token_id, price_text, col["address"])
                     await channel.send(embed=embed, view=view)
                     action = "MINT" if is_mint else "SALE"
                     print(f"✅ Posted {col['name']} {action} → Token #{token_id}")
