@@ -1,4 +1,5 @@
 import discord
+from discord import app_commands
 import asyncio
 import os
 import json
@@ -25,14 +26,16 @@ COLLECTIONS = [
         "name": "Monkey Muscle",
         "color": 0x00ff88,
         "ignored": {"0x26d4a407355ffe98dcbcec6f03cfb14918802703"},
-        "post_mints": False
+        "post_mints": False,
+        "ebisu_slug": "monkey-muscle"
     },
     {
         "address": "0xEe553dcB65502f69F33AD1Ece015740dA9Cf0f02",
         "name": "Monkey Muscle VIP",
         "color": 0xff0000,
         "ignored": set(),
-        "post_mints": True
+        "post_mints": True,
+        "ebisu_slug": "monkey-muscle-v-i-p"
     }
 ]
 
@@ -41,6 +44,7 @@ for col in COLLECTIONS:
 
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
+tree = app_commands.CommandTree(client)
 w3 = AsyncWeb3(AsyncWeb3.AsyncHTTPProvider(CRONOS_RPC))
 
 contracts = {}
@@ -123,7 +127,6 @@ async def fetch_metadata(contract_address, token_id):
 
         name = data.get("name") or data.get("title") or f"NFT #{token_id}"
 
-        # Stronger image detection
         image = (
             data.get("image")
             or data.get("image_url")
@@ -189,104 +192,102 @@ async def get_sale_price(from_addr, to_addr, block_number):
     except:
         return "Sold on Ebisu's Bay"
 
-def make_share_view(collection_name, token_id, price_text, contract_address):
-    """Share button using the correct Ebisu's Bay URL (chain ID 25)."""
-    marketplace_url = f"https://app.ebisusbay.com/collection/25/{contract_address}/{token_id}"
+def make_share_view(collection_name, token_id, price_text, ebisu_slug):
+    marketplace_url = f"https://app.ebisusbay.com/collection/cronos/{ebisu_slug}/{token_id}"
     text = f"Just got {collection_name} #{token_id}! {price_text} 🦍\n{marketplace_url}"
     share_url = f"https://twitter.com/intent/tweet?text={quote(text)}"
     view = discord.ui.View()
     view.add_item(discord.ui.Button(label="Share on X", url=share_url, style=discord.ButtonStyle.link))
     return view
 
-@client.event
-async def on_ready():
-    print(f"✅ Multi-Collection Sales Bot is ONLINE as {client.user}")
-    channel = client.get_channel(CHANNEL_ID)
-    if channel:
-        await channel.send("🧪 **Bot Restarted**\nNow monitoring Monkey Muscle (green) and Monkey Muscle VIP (red) + VIP mints.")
-        await send_sample_embeds(channel)
-    client.loop.create_task(sales_listener())
-
-async def send_sample_embeds(channel):
-    sale_samples = [
-        {
-            "col": COLLECTIONS[0],
-            "token_id": 100,
-            "price": "123.45 CRO",
-            "buyer": "0xSampleB...",
-            "seller": "0xSampleS...",
-            "fallback_image": "https://via.placeholder.com/400x400/00ff88/000000?text=Monkey+Muscle+Sample"
-        },
-        {
-            "col": COLLECTIONS[1],
-            "token_id": 256,
-            "price": "99.99 CRO",
-            "buyer": "0xSampleB...",
-            "seller": "0xSampleS...",
-        },
-    ]
-
-    for sample in sale_samples:
-        col = sample["col"]
-        token_id = sample["token_id"]
-        try:
-            name, image_url, rarity = await fetch_metadata(col["address"], token_id)
-        except Exception as e:
-            print(f"Sample metadata failed for {col['name']} #{token_id}: {e}")
-            name, image_url, rarity = f"{col['name']} #{token_id}", None, "Sample traits"
-
-        if not image_url and sample.get("fallback_image"):
-            image_url = sample["fallback_image"]
-
-        embed = discord.Embed(
-            title=f"🛒 {col['name']} SOLD! (SAMPLE)",
-            description=f"**{name}**\n*This is a ghost sample for UI check only*",
-            color=col["color"],
-            timestamp=datetime.utcnow()
-        )
-        embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
-        embed.add_field(name="Buyer", value=f"`{sample['buyer']}`", inline=True)
-        embed.add_field(name="Seller", value=f"`{sample['seller']}`", inline=True)
-        embed.add_field(name="Price", value=sample["price"], inline=False)
-        embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
-        embed.add_field(name="Contract", value=f"`{col['address']}`", inline=False)
-        embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | SAMPLE")
-
-        if image_url:
-            embed.set_image(url=image_url)
-
-        view = make_share_view(col["name"], token_id, sample["price"], col["address"])
-        await channel.send(embed=embed, view=view)
-        print(f"✅ Sent SALE sample for {col['name']}")
-        await asyncio.sleep(1)
-
-    # Mint sample for VIP
-    vip_col = COLLECTIONS[1]
-    mint_token_id = 300
-    try:
-        name, image_url, rarity = await fetch_metadata(vip_col["address"], mint_token_id)
-    except:
-        name, image_url, rarity = f"{vip_col['name']} #{mint_token_id}", None, "Sample traits"
+# ====================== SLASH COMMANDS ======================
+@tree.command(name="testog", description="Post a real sample sale of the original Monkey Muscle collection")
+async def testog(interaction: discord.Interaction):
+    await interaction.response.defer()
+    col = COLLECTIONS[0]
+    token_id = 787
+    name, image_url, rarity = await fetch_metadata(col["address"], token_id)
 
     embed = discord.Embed(
-        title=f"🆕 {vip_col['name']} MINTED! (SAMPLE)",
-        description=f"**{name}**\n*This is a ghost mint sample for UI check only*",
-        color=vip_col["color"],
+        title=f"🛒 {col['name']} SOLD! (TEST)",
+        description=f"**{name}**",
+        color=col["color"],
         timestamp=datetime.utcnow()
     )
-    embed.add_field(name="Token ID", value=f"#{mint_token_id}", inline=True)
-    embed.add_field(name="Minter", value="`0xSampleM...`", inline=True)
-    embed.add_field(name="Price", value="Mint", inline=False)
+    embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
+    embed.add_field(name="Buyer", value="`0xTestB...`", inline=True)
+    embed.add_field(name="Seller", value="`0xTestS...`", inline=True)
+    embed.add_field(name="Price", value="150.00 CRO", inline=False)
     embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
-    embed.add_field(name="Contract", value=f"`{vip_col['address']}`", inline=False)
-    embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | SAMPLE")
-
+    embed.add_field(name="Contract", value=f"`{col['address']}`", inline=False)
+    embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | TEST")
     if image_url:
         embed.set_image(url=image_url)
 
-    view = make_share_view(vip_col["name"], mint_token_id, "Mint", vip_col["address"])
-    await channel.send(embed=embed, view=view)
-    print("✅ Sent MINT sample for VIP")
+    view = make_share_view(col["name"], token_id, "150.00 CRO", col["ebisu_slug"])
+    await interaction.followup.send(embed=embed, view=view)
+
+@tree.command(name="testvip", description="Post a real sample sale of the VIP collection")
+async def testvip(interaction: discord.Interaction):
+    await interaction.response.defer()
+    col = COLLECTIONS[1]
+    token_id = 256
+    name, image_url, rarity = await fetch_metadata(col["address"], token_id)
+
+    embed = discord.Embed(
+        title=f"🛒 {col['name']} SOLD! (TEST)",
+        description=f"**{name}**",
+        color=col["color"],
+        timestamp=datetime.utcnow()
+    )
+    embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
+    embed.add_field(name="Buyer", value="`0xTestB...`", inline=True)
+    embed.add_field(name="Seller", value="`0xTestS...`", inline=True)
+    embed.add_field(name="Price", value="99.99 CRO", inline=False)
+    embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
+    embed.add_field(name="Contract", value=f"`{col['address']}`", inline=False)
+    embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | TEST")
+    if image_url:
+        embed.set_image(url=image_url)
+
+    view = make_share_view(col["name"], token_id, "99.99 CRO", col["ebisu_slug"])
+    await interaction.followup.send(embed=embed, view=view)
+
+@tree.command(name="testmint", description="Post a real sample mint of the VIP collection")
+async def testmint(interaction: discord.Interaction):
+    await interaction.response.defer()
+    col = COLLECTIONS[1]
+    token_id = 512
+    name, image_url, rarity = await fetch_metadata(col["address"], token_id)
+
+    embed = discord.Embed(
+        title=f"🆕 {col['name']} MINTED! (TEST)",
+        description=f"**{name}**",
+        color=col["color"],
+        timestamp=datetime.utcnow()
+    )
+    embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
+    embed.add_field(name="Minter", value="`0xTestM...`", inline=True)
+    embed.add_field(name="Price", value="Mint", inline=False)
+    embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
+    embed.add_field(name="Contract", value=f"`{col['address']}`", inline=False)
+    embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | TEST")
+    if image_url:
+        embed.set_image(url=image_url)
+
+    view = make_share_view(col["name"], token_id, "Mint", col["ebisu_slug"])
+    await interaction.followup.send(embed=embed, view=view)
+
+# ====================== EVENTS & LISTENER ======================
+@client.event
+async def on_ready():
+    print(f"✅ Multi-Collection Sales Bot is ONLINE as {client.user}")
+    await tree.sync()
+    print("✅ Slash commands synced")
+    channel = client.get_channel(CHANNEL_ID)
+    if channel:
+        await channel.send("🧪 **Bot Restarted**\nSlash commands ready: `/testog` `/testvip` `/testmint`")
+    client.loop.create_task(sales_listener())
 
 async def sales_listener():
     global seen_logs
@@ -371,7 +372,7 @@ async def sales_listener():
                     if image_url:
                         embed.set_image(url=image_url)
 
-                    view = make_share_view(col["name"], token_id, price_text, col["address"])
+                    view = make_share_view(col["name"], token_id, price_text, col["ebisu_slug"])
                     await channel.send(embed=embed, view=view)
                     action = "MINT" if is_mint else "SALE"
                     print(f"✅ Posted {col['name']} {action} → Token #{token_id}")
