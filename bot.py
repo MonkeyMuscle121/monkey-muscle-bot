@@ -172,11 +172,10 @@ async def get_sale_price(from_addr, to_addr, block_number):
     except:
         return "Sold on Ebisu's Bay"
 
-def make_share_view(collection_name, token_id, price_text, image_url=None):
-    """Creates a link button that opens a pre-filled X post."""
-    text = f"Just got {collection_name} #{token_id}! {price_text} 🦍"
-    if image_url:
-        text += f"\n{image_url}"
+def make_share_view(collection_name, token_id, price_text, contract_address, image_url=None):
+    """Creates a link button that opens a pre-filled X post with the marketplace page (image shows via card)."""
+    marketplace_url = f"https://app.ebisusbay.com/collections/{contract_address}/{token_id}"
+    text = f"Just got {collection_name} #{token_id}! {price_text} 🦍\n{marketplace_url}"
     share_url = f"https://twitter.com/intent/tweet?text={quote(text)}"
     view = discord.ui.View()
     view.add_item(discord.ui.Button(label="Share on X", url=share_url, style=discord.ButtonStyle.link))
@@ -239,7 +238,7 @@ async def send_sample_embeds(channel):
         if image_url:
             embed.set_image(url=image_url)
 
-        view = make_share_view(col["name"], token_id, sample["price"], image_url)
+        view = make_share_view(col["name"], token_id, sample["price"], col["address"], image_url)
         await channel.send(embed=embed, view=view)
         print(f"✅ Sent SALE sample for {col['name']}")
         await asyncio.sleep(1)
@@ -268,7 +267,7 @@ async def send_sample_embeds(channel):
     if image_url:
         embed.set_image(url=image_url)
 
-    view = make_share_view(vip_col["name"], mint_token_id, "Mint", image_url)
+    view = make_share_view(vip_col["name"], mint_token_id, "Mint", vip_col["address"], image_url)
     await channel.send(embed=embed, view=view)
     print("✅ Sent MINT sample for VIP")
 
@@ -284,7 +283,7 @@ async def sales_listener():
     while True:
         try:
             current_block = await w3.eth.block_number
-            from_block = max(current_block - 12, 0)  # slightly smaller window
+            from_block = max(current_block - 12, 0)
 
             for col in COLLECTIONS:
                 logs = await w3.eth.get_logs({
@@ -318,7 +317,6 @@ async def sales_listener():
                         save_seen_logs(seen_logs)
                         continue
 
-                    # Mark as seen immediately to reduce duplicates
                     seen_logs.add(log_id)
                     save_seen_logs(seen_logs)
 
@@ -356,7 +354,7 @@ async def sales_listener():
                     if image_url:
                         embed.set_image(url=image_url)
 
-                    view = make_share_view(col["name"], token_id, price_text, image_url)
+                    view = make_share_view(col["name"], token_id, price_text, col["address"], image_url)
                     await channel.send(embed=embed, view=view)
                     action = "MINT" if is_mint else "SALE"
                     print(f"✅ Posted {col['name']} {action} → Token #{token_id}")
