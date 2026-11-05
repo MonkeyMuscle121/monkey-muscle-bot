@@ -98,10 +98,10 @@ async def fetch_metadata(contract_address, token_id):
         if token_uri.startswith("ipfs://"):
             cid = token_uri.replace("ipfs://", "")
             urls_to_try = [
-                f"https://ipfs.io/ipfs/{cid}",
                 f"https://gateway.pinata.cloud/ipfs/{cid}",
                 f"https://cloudflare-ipfs.com/ipfs/{cid}",
                 f"https://dweb.link/ipfs/{cid}",
+                f"https://ipfs.io/ipfs/{cid}",
             ]
         elif token_uri.startswith("http"):
             urls_to_try = [token_uri]
@@ -156,7 +156,7 @@ async def fetch_metadata(contract_address, token_id):
         if image and isinstance(image, str):
             if image.startswith("ipfs://"):
                 cid = image.replace("ipfs://", "")
-                image = f"https://ipfs.io/ipfs/{cid}"
+                image = f"https://gateway.pinata.cloud/ipfs/{cid}"
             elif image.startswith("ar://"):
                 image = f"https://arweave.net/{image.replace('ar://', '')}"
 
