@@ -3,6 +3,7 @@ import asyncio
 import os
 import json
 from datetime import datetime
+from urllib.parse import quote
 from web3 import AsyncWeb3
 from dotenv import load_dotenv
 import aiohttp
@@ -65,8 +66,11 @@ def load_seen_logs():
     return set()
 
 def save_seen_logs(seen):
-    with open(SEEN_LOGS_FILE, "w") as f:
-        json.dump(list(seen), f)
+    try:
+        with open(SEEN_LOGS_FILE, "w") as f:
+            json.dump(list(seen), f)
+    except Exception as e:
+        print(f"Failed to save seen_logs: {e}")
 
 seen_logs = load_seen_logs()
 
@@ -168,6 +172,16 @@ async def get_sale_price(from_addr, to_addr, block_number):
     except:
         return "Sold on Ebisu's Bay"
 
+def make_share_view(collection_name, token_id, price_text, image_url=None):
+    """Creates a link button that opens a pre-filled X post."""
+    text = f"Just got {collection_name} #{token_id}! {price_text} 🦍"
+    if image_url:
+        text += f"\n{image_url}"
+    share_url = f"https://twitter.com/intent/tweet?text={quote(text)}"
+    view = discord.ui.View()
+    view.add_item(discord.ui.Button(label="Share on X", url=share_url, style=discord.ButtonStyle.link))
+    return view
+
 @client.event
 async def on_ready():
     print(f"✅ Multi-Collection Sales Bot is ONLINE as {client.user}")
@@ -178,7 +192,6 @@ async def on_ready():
     client.loop.create_task(sales_listener())
 
 async def send_sample_embeds(channel):
-    # Sale samples
     sale_samples = [
         {
             "col": COLLECTIONS[0],
@@ -226,13 +239,14 @@ async def send_sample_embeds(channel):
         if image_url:
             embed.set_image(url=image_url)
 
-        await channel.send(embed=embed)
+        view = make_share_view(col["name"], token_id, sample["price"], image_url)
+        await channel.send(embed=embed, view=view)
         print(f"✅ Sent SALE sample for {col['name']}")
         await asyncio.sleep(1)
 
     # Mint sample for VIP
     vip_col = COLLECTIONS[1]
-    mint_token_id = 300  # change if you have a known minted token
+    mint_token_id = 300
     try:
         name, image_url, rarity = await fetch_metadata(vip_col["address"], mint_token_id)
     except:
@@ -254,7 +268,8 @@ async def send_sample_embeds(channel):
     if image_url:
         embed.set_image(url=image_url)
 
-    await channel.send(embed=embed)
+    view = make_share_view(vip_col["name"], mint_token_id, "Mint", image_url)
+    await channel.send(embed=embed, view=view)
     print("✅ Sent MINT sample for VIP")
 
 async def sales_listener():
@@ -269,7 +284,7 @@ async def sales_listener():
     while True:
         try:
             current_block = await w3.eth.block_number
-            from_block = max(current_block - 15, 0)
+            from_block = max(current_block - 12, 0)  # slightly smaller window
 
             for col in COLLECTIONS:
                 logs = await w3.eth.get_logs({
@@ -295,6 +310,7 @@ async def sales_listener():
 
                     if is_mint and not col.get("post_mints", False):
                         seen_logs.add(log_id)
+                        save_seen_logs(seen_logs)
                         continue
 
                     if from_addr in col["ignored"] or to_addr in col["ignored"]:
@@ -302,6 +318,7 @@ async def sales_listener():
                         save_seen_logs(seen_logs)
                         continue
 
+                    # Mark as seen immediately to reduce duplicates
                     seen_logs.add(log_id)
                     save_seen_logs(seen_logs)
 
@@ -317,6 +334,7 @@ async def sales_listener():
                         embed.add_field(name="Token ID", value=f"#{token_id}", inline=True)
                         embed.add_field(name="Minter", value=f"`{to_addr[:8]}...`", inline=True)
                         embed.add_field(name="Price", value="Mint", inline=False)
+                        price_text = "Mint"
                     else:
                         price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
                         embed = discord.Embed(
@@ -329,6 +347,7 @@ async def sales_listener():
                         embed.add_field(name="Buyer", value=f"`{to_addr[:8]}...`", inline=True)
                         embed.add_field(name="Seller", value=f"`{from_addr[:8]}...`", inline=True)
                         embed.add_field(name="Price", value=price_info, inline=False)
+                        price_text = price_info
 
                     embed.add_field(name="Rarity / Traits", value=rarity[:600] + ("..." if len(rarity) > 600 else ""), inline=False)
                     embed.add_field(name="Contract", value=f"`{col['address']}`", inline=False)
@@ -337,11 +356,12 @@ async def sales_listener():
                     if image_url:
                         embed.set_image(url=image_url)
 
-                    await channel.send(embed=embed)
+                    view = make_share_view(col["name"], token_id, price_text, image_url)
+                    await channel.send(embed=embed, view=view)
                     action = "MINT" if is_mint else "SALE"
                     print(f"✅ Posted {col['name']} {action} → Token #{token_id}")
 
-            await asyncio.sleep(10)
+            await asyncio.sleep(12)
 
         except Exception as e:
             print(f"Error: {e}")
