@@ -156,7 +156,20 @@ async def fetch_metadata(contract_address, token_id):
         if image and isinstance(image, str):
             if image.startswith("ipfs://"):
                 cid = image.replace("ipfs://", "")
-                image = f"https://gateway.pinata.cloud/ipfs/{cid}"
+                image_candidates = [
+                    f"https://gateway.pinata.cloud/ipfs/{cid}",
+                    f"https://cloudflare-ipfs.com/ipfs/{cid}",
+                    f"https://dweb.link/ipfs/{cid}",
+                    f"https://ipfs.io/ipfs/{cid}",
+                ]
+                image = image_candidates[0]
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.head(image_candidates[0], timeout=6) as resp:
+                            if resp.status != 200:
+                                image = image_candidates[1]
+                except:
+                    image = image_candidates[1]
             elif image.startswith("ar://"):
                 image = f"https://arweave.net/{image.replace('ar://', '')}"
 
