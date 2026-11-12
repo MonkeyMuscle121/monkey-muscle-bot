@@ -148,11 +148,6 @@ async def fetch_metadata(contract_address, token_id):
         if isinstance(image, dict):
             image = image.get("url") or image.get("ipfs") or image.get("gateway") or image.get("uri")
 
-        if not image:
-            print(f"⚠️ No image found for #{token_id}. Top-level keys: {list(data.keys())}")
-            if "properties" in data and isinstance(data["properties"], dict):
-                print(f"   properties keys: {list(data['properties'].keys())}")
-
         if image and isinstance(image, str):
             if image.startswith("ipfs://"):
                 cid = image.replace("ipfs://", "")
@@ -186,8 +181,9 @@ async def fetch_metadata(contract_address, token_id):
     return f"NFT #{token_id}", None, "Rarity unavailable"
 
 async def get_sale_price(from_addr, to_addr, block_number):
+    """Returns price string only if real CRO value is found. Otherwise returns None."""
     try:
-        for i in range(-2, 6):
+        for i in range(-3, 8):
             check_block = block_number + i
             if check_block < 0:
                 continue
@@ -200,10 +196,12 @@ async def get_sale_price(from_addr, to_addr, block_number):
                     tx_to = (tx.get("to") or "").lower()
                     if (from_addr.lower() in (tx_from, tx_to) or to_addr.lower() in (tx_from, tx_to)):
                         price_cro = tx["value"] / 10**18
-                        return f"{price_cro:.2f} CRO"
-        return "Sold on Ebisu's Bay"
-    except:
-        return "Sold on Ebisu's Bay"
+                        if price_cro > 0.01:  # ignore dust
+                            return f"{price_cro:.2f} CRO"
+        return None
+    except Exception as e:
+        print(f"Price check error: {e}")
+        return None
 
 def make_share_view(collection_name, token_id, price_text, ebisu_slug):
     marketplace_url = f"https://app.ebisusbay.com/collection/cronos/{ebisu_slug}/{token_id}"
@@ -299,7 +297,7 @@ async def on_ready():
     print("✅ Slash commands synced")
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("🧪 **Bot Restarted**\nSlash commands ready: `/testog` `/testvip` `/testmint`")
+        await channel.send("🧪 **Bot Restarted**\nNow only real sales (with value) + VIP mints. Commands: `/testog` `/testvip` `/testmint`")
     client.loop.create_task(sales_listener())
 
 async def sales_listener():
@@ -309,7 +307,7 @@ async def sales_listener():
         print("❌ Channel not found!")
         return
 
-    print("✅ Listening for sales + VIP mints...")
+    print("✅ Listening for real sales + VIP mints...")
 
     while True:
         try:
@@ -338,16 +336,29 @@ async def sales_listener():
 
                     is_mint = from_addr == "0x0000000000000000000000000000000000000000"
 
+                    # Skip mints unless this collection posts them
                     if is_mint and not col.get("post_mints", False):
                         seen_logs.add(log_id)
                         save_seen_logs(seen_logs)
                         continue
 
+                    # Skip ignored addresses
                     if from_addr in col["ignored"] or to_addr in col["ignored"]:
                         seen_logs.add(log_id)
                         save_seen_logs(seen_logs)
                         continue
 
+                    # For non-mints, require a real price
+                    price_info = None
+                    if not is_mint:
+                        price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
+                        if not price_info:
+                            # No value found → treat as plain transfer, ignore
+                            seen_logs.add(log_id)
+                            save_seen_logs(seen_logs)
+                            continue
+
+                    # Real sale or mint — mark seen and post
                     seen_logs.add(log_id)
                     save_seen_logs(seen_logs)
 
@@ -365,7 +376,6 @@ async def sales_listener():
                         embed.add_field(name="Price", value="Mint", inline=False)
                         price_text = "Mint"
                     else:
-                        price_info = await get_sale_price(from_addr, to_addr, log["blockNumber"])
                         embed = discord.Embed(
                             title=f"🛒 {col['name']} SOLD!",
                             description=f"**{name}**",
@@ -388,7 +398,7 @@ async def sales_listener():
                     view = make_share_view(col["name"], token_id, price_text, col["ebisu_slug"])
                     await channel.send(embed=embed, view=view)
                     action = "MINT" if is_mint else "SALE"
-                    print(f"✅ Posted {col['name']} {action} → Token #{token_id}")
+                    print(f"✅ Posted {col['name']} {action} → Token #{token_id} | {price_text}")
 
             await asyncio.sleep(12)
 
