@@ -174,14 +174,20 @@ async def get_sale_price(from_addr, to_addr, block_number):
     except:
         return None
 
-def make_share_view(collection_name, token_id, price_text, ebisu_slug):
+def make_share_view(collection_name, token_id, price_text, ebisu_slug, is_mint=False):
+    """Generic share text that tags @monkeymuscle121"""
+    action = "minted" if is_mint else "bought"
     marketplace_url = f"https://app.ebisusbay.com/collection/cronos/{ebisu_slug}/{token_id}"
-    text = f"Just got {collection_name} #{token_id}! {price_text} 🦍\n{marketplace_url}"
+    text = (
+        f"Someone's just {action} {collection_name} #{token_id}! {price_text} 🦍 it's a banger @monkeymuscle121 💥💥💥💥\n"
+        f"{marketplace_url}"
+    )
     share_url = f"https://twitter.com/intent/tweet?text={quote(text)}"
     view = discord.ui.View()
     view.add_item(discord.ui.Button(label="Share on X", url=share_url, style=discord.ButtonStyle.link))
     return view
 
+# ====================== SLASH COMMANDS ======================
 @tree.command(name="testog", description="Post a real sample sale of the original Monkey Muscle collection")
 async def testog(interaction: discord.Interaction):
     await interaction.response.defer()
@@ -198,7 +204,7 @@ async def testog(interaction: discord.Interaction):
     embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | TEST")
     if image_url:
         embed.set_image(url=image_url)
-    view = make_share_view(col["name"], token_id, "150.00 CRO", col["ebisu_slug"])
+    view = make_share_view(col["name"], token_id, "150.00 CRO", col["ebisu_slug"], is_mint=False)
     await interaction.followup.send(embed=embed, view=view)
 
 @tree.command(name="testvip", description="Post a real sample sale of the VIP collection")
@@ -217,7 +223,7 @@ async def testvip(interaction: discord.Interaction):
     embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | TEST")
     if image_url:
         embed.set_image(url=image_url)
-    view = make_share_view(col["name"], token_id, "99.99 CRO", col["ebisu_slug"])
+    view = make_share_view(col["name"], token_id, "99.99 CRO", col["ebisu_slug"], is_mint=False)
     await interaction.followup.send(embed=embed, view=view)
 
 @tree.command(name="testmint", description="Post a real sample mint of the VIP collection")
@@ -235,16 +241,17 @@ async def testmint(interaction: discord.Interaction):
     embed.set_footer(text="DISCORD SALES BOT BY MONKEY MUSCLE | TEST")
     if image_url:
         embed.set_image(url=image_url)
-    view = make_share_view(col["name"], token_id, "Mint", col["ebisu_slug"])
+    view = make_share_view(col["name"], token_id, "Mint", col["ebisu_slug"], is_mint=True)
     await interaction.followup.send(embed=embed, view=view)
 
+# ====================== EVENTS & LISTENER ======================
 @client.event
 async def on_ready():
     print(f"✅ Bot ONLINE as {client.user}")
     await tree.sync()
     channel = client.get_channel(CHANNEL_ID)
     if channel:
-        await channel.send("🧪 **Bot Restarted**\nVIP mints + real sales only. Commands: `/testog` `/testvip` `/testmint`")
+        await channel.send("🧪 **Bot Restarted**\nShare text updated (generic + @monkeymuscle121). Commands: `/testog` `/testvip` `/testmint`")
     client.loop.create_task(sales_listener())
 
 async def sales_listener():
@@ -259,7 +266,7 @@ async def sales_listener():
     while True:
         try:
             current_block = await w3.eth.block_number
-            from_block = max(current_block - 20, 0)  # wider window
+            from_block = max(current_block - 20, 0)
 
             for col in COLLECTIONS:
                 logs = await w3.eth.get_logs({
@@ -288,7 +295,6 @@ async def sales_listener():
                             seen_logs.add(log_id)
                             save_seen_logs(seen_logs)
                             continue
-                        print(f"🆕 MINT detected: {col['name']} #{token_id}")
                     else:
                         if from_addr in col["ignored"] or to_addr in col["ignored"]:
                             seen_logs.add(log_id)
@@ -299,9 +305,7 @@ async def sales_listener():
                             seen_logs.add(log_id)
                             save_seen_logs(seen_logs)
                             continue
-                        print(f"💰 SALE detected: {col['name']} #{token_id} @ {price_info}")
 
-                    # Post it
                     seen_logs.add(log_id)
                     save_seen_logs(seen_logs)
 
@@ -327,9 +331,8 @@ async def sales_listener():
                     if image_url:
                         embed.set_image(url=image_url)
 
-                    view = make_share_view(col["name"], token_id, price_text, col["ebisu_slug"])
+                    view = make_share_view(col["name"], token_id, price_text, col["ebisu_slug"], is_mint=is_mint)
                     await channel.send(embed=embed, view=view)
-                    print(f"✅ Posted {col['name']} {'MINT' if is_mint else 'SALE'} #{token_id}")
 
             await asyncio.sleep(10)
 
